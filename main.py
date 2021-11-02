@@ -72,12 +72,12 @@ def create_layout():  # Creates layout of GUI
             [sg.Text("White: ", size=(8, 1)), sg.Text("Human", size=(30, 1), relief=sg.RELIEF_GROOVE)],
             [sg.Text("Black: ", size=(8, 1)), sg.Text("Computer", size=(30, 1), relief=sg.RELIEF_GROOVE)]]
             # The info under the board
-    timers = [sg.Text("5:00", relief=sg.RELIEF_RAISED, font=10), sg.Text("5:00", relief=sg.RELIEF_RAISED, font=10)] # TODO: make work or remove
+    # TODO: Add timers back?
     moveList = [[sg.Text("Move list:", font=10)],
                 [sg.Multiline( size=(50, 7), auto_refresh=True, no_scrollbar=True, disabled=True, key="moves")],
                 [sg.Button("<-", key="previous"), sg.Button("->", key="next")]]
                 #This lists the moves from the game
-    layout = [menu, board, timers, info,  moveList] #Collates all the parts
+    layout = [menu, board, info,  moveList] #Collates all the parts
     return layout
 
 
