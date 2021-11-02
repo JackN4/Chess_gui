@@ -88,7 +88,7 @@ class EngineOutput(threading.Thread): #This is a threaded worker that waits for 
         self.pipe = pipe
         self.button = sg.Button(visible=False, key="engine_output") #The button that is triggered when there is output from the engine
         self.responses = Queue() #The output of the engine is added to this queue
-        self.setDaemon(True)
+        self.daemon = True
 
     def run(self):
         self.worker()
