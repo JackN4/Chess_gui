@@ -6,11 +6,12 @@ import threading
 from subprocess import Popen, PIPE, STDOUT
 from queue import Queue
 import traceback
+import time
 import copy
 
 enginePath = r"Chess.exe"
 whiteColour = "#e8e8ed"
-blackColour = "#3c3c53"
+blackColour = "#007acc"
 imgDir = "img/"  # Folder with images in
 blankImg = imgDir + "blank.png"  # Empty square
 imgs = ["pawn", "knight", "bishop", "rook", "queen", "king"]  # File names of pieces
@@ -23,6 +24,7 @@ def main():
     layout = create_layout()  # Creates Layout
     window = sg.Window("Chess", [layout, [engine.output.button]])  #Setups GUI
     lastPressed = None
+    training = False
     while True:  # Event Loop
         event, values = window.read()  # Gets event
         #print(event, values)
@@ -39,13 +41,25 @@ def main():
             if gameIn:
                 game = gameIn
         elif type(event) is tuple:  # If it was a click on a square
-            lastPressed = game.check_move(event, lastPressed, engine)
+            lastPressed = game.check_move(event, lastPressed, engine, training)
         elif event in diffs:  # Change in difficulty
             engine.difficulty = diffs.index(event)  # Sets difficulty
             window.find_element("diff").update(event)  # Changes the display difficulty
         elif event == "engine_output":
-            game.make_engine_move(engine)
+            game.make_engine_move(engine, training)
             # If the engine has outputed something it is checked if it is a move and then played
+        elif event == "FEN":
+            export_fen(game)
+        elif event == "Competitive" and training:
+            window.find_element("Hint").update(visible=False)
+            window.find_element("Undo").update(visible=False)
+            window.find_element("mode-info").update("Competitive")
+            training = False
+        elif event == "Training" and not training:
+            window.find_element("Hint").update(visible=True)
+            window.find_element("Undo").update(visible=True)
+            window.find_element("mode-info").update("Training")
+            training = False
         update_window(window, game)
     engine.engine.kill() # Ends the engine process
 
@@ -64,10 +78,10 @@ def create_layout():  # Creates layout of GUI
     menuDef = [["New Game", ["From Start", "From PGN", "From FEN"]],
                ["Difficulty", diffs],
                ["Export", ["FEN"]],
-               ["Mode", ["Competitive", "Training", "Analysis"]]]  # The menu along the top
+               ["Mode", ["Competitive", "Training"]]]  # The menu along the top
     menu = [sg.Menu(menuDef)]
     board = create_board()  #The board with squares
-    info = [[sg.Text("Mode:", size=(8, 1)), sg.Text("Competitive", size=(30, 1), relief=sg.RELIEF_GROOVE)],
+    info = [[sg.Text("Mode:", size=(8, 1)), sg.Text("Competitive", size=(30, 1), relief=sg.RELIEF_GROOVE, key="mode-info")],
             [sg.Text("Difficulty:", size=(8, 1)), sg.Text("Impossible", size=(30, 1), relief=sg.RELIEF_GROOVE, key="diff")],
             [sg.Text("White: ", size=(8, 1)), sg.Text("Human", size=(30, 1), relief=sg.RELIEF_GROOVE)],
             [sg.Text("Black: ", size=(8, 1)), sg.Text("Computer", size=(30, 1), relief=sg.RELIEF_GROOVE)]]
@@ -75,7 +89,7 @@ def create_layout():  # Creates layout of GUI
     # TODO: Add timers back?
     moveList = [[sg.Text("Move list:", font=10)],
                 [sg.Multiline( size=(50, 7), auto_refresh=True, no_scrollbar=True, disabled=True, key="moves")],
-                [sg.Button("<-", key="previous"), sg.Button("->", key="next")]]
+                [sg.Button("<-", key="previous"), sg.Button("->", key="next")], [sg.Button("Hint", visible=False), sg.Button("Undo", visible=False)]]
                 #This lists the moves from the game
     layout = [menu, board, info,  moveList] #Collates all the parts
     return layout
@@ -134,17 +148,32 @@ class Engine: #Handles communication with the egine
         else:
             self.send("go diff " + str(self.difficulty)) #Search with difficulty level attached
 
+    def get_training_move(self, board, startFen):
+        self.commandPositions.put(board.fen())  # Adds current position to queue
+        self.set_position(board, startFen)  # Sets position within engine to current position
+        self.send("go eval")
+
     def get_best_move(self, board, startFen): #Finds bestmove
         self.commandPositions.put(board.fen()) #Adds current position to queue
         self.set_position(board, startFen) #Sets position within engine to current position
         self.search() #Searches
 
-    def get_response(self, board): #TODO: Needs to be fixed if game changes
+    def get_response(self, board):
         while not self.output.responses.empty():
-            response = self.output.responses.get() #Gets next response 
+            response = self.output.responses.get() #Gets next response
             if "bestmove" in response and self.commandPositions.get() == board.fen(): #If it contains bestmove and the command was from the current board
                     return response 
         return None #Was no correct response
+
+    def get_training_response(self, board):
+        while not self.output.responses.empty():
+            response = self.output.responses.get() #Gets next response
+            if "bestmove" in response and self.commandPositions.get() == board.fen():
+                if "eval" in response: #If it contains bestmove and the command was from the current board
+                    responseList = response.split(" ")
+                    return int(responseList[1]), int(responseList[3])
+        return None, None #Was no correct response
+
 
     def get_move_response(self, board): #Returns the move from the response
         response = self.get_response(board)
@@ -154,7 +183,6 @@ class Engine: #Handles communication with the egine
             return None
 
 
-
 def export_game(message, output): #Creates a window that displays text to user allowing the game to be exported in different ways
     layout = [[sg.Text(message)], [sg.Multiline(default_text=output, key="input", disabled=True)]]
     popup = sg.Window("Export", layout)
@@ -162,6 +190,7 @@ def export_game(message, output): #Creates a window that displays text to user a
         event, values = popup.read()
         if event == sg.WIN_CLOSED or event == 'Exit':
             popup.close()
+            return
 
 
 def export_fen(game): #Exports current board fen
@@ -182,7 +211,7 @@ def get_input(message): #Creates a windows that gets a returns input from the us
             return ""
 
 
-def show_error(message): #Creates a window that displays an error message
+def show_message(message): #Creates a window that displays an error message
     popup = sg.Window("ERROR", [[sg.Text(message)]])
     while True:
         event, values = popup.read()
@@ -197,7 +226,7 @@ def get_fen(): #Gets a fen from user input and makes board from it
         game = Game(board = chess.Board(fen))
         return game
     except ValueError: #IF there was an error while parsing the fen
-        show_error("You entered an incorrect FEN")
+        show_message("You entered an incorrect FEN")
 
 
 def get_pgn(): #Gets a PGN from user input and creates board from it
@@ -214,7 +243,7 @@ def get_pgn(): #Gets a PGN from user input and creates board from it
                     return Game(board=board) #PGN was correct and board is made
     except ValueError:
         pass
-    show_error("The PGN you entered was incorrect") #PGN was not correct
+    show_message("The PGN you entered was incorrect") #PGN was not correct
 
 
 def create_board(): #Creates board for GUI
@@ -242,6 +271,20 @@ def update_board(window, board): #Updates the board
             window[(rowNum, colNum)].Update(image_filename=imgFile) #Updates square with image
 
 
+class TrainingInfo:
+    def __init__(self):
+        self.fen = ""
+        self.bestMove = None
+        self.eval = 0
+        self.lastMove = 2  #2-Perfect 1-ok 0-bad
+
+    def update(self, board, move, evalIn):
+        self.fen = board.fen()
+        self.bestMove = move
+        self.eval = evalIn
+
+
+
 class Game: #Class that holds the board info and moves
     def __init__(self, humanColour=True, board=None):
         if board:
@@ -255,22 +298,27 @@ class Game: #Class that holds the board info and moves
             self.startBoard = chess.Board()
             self.moves = []
         self.human = humanColour
+        self.train  = TrainingInfo()
 
     def get_move_list(self): #Gets list of moves in short algebraic notation
         return self.startBoard.variation_san(self.moves)
 
-    def check_move(self, pressed, lastPressed, engine): #Proccesses a click on a square
+    def check_move(self, pressed, lastPressed, engine, training): #Proccesses a click on a square
         if self.board.turn == self.human: #If it is human's turn
             if lastPressed: #If a square has been pressed previously
                 startSquare = chess.square(lastPressed[1], lastPressed[0]) #Gets the square at start of move
-                if self.board.piece_at(startSquare).piece_type == chess.PAWN and (pressed[0]in(7, 0)): #Checks if there is promotion
-                    promo = self.get_promotion()
+                if self.board.piece_at(startSquare).piece_type == chess.PAWN and (pressed[0]in(7, 0))\
+                    and chess.Move(startSquare, chess.square(pressed[1], pressed[0]), promotion=chess.QUEEN) in self.board.legal_moves: #Checks if there is promotion
+                        promo = self.get_promotion()
                 else:
                     promo = None
                 move = chess.Move(startSquare, chess.square(pressed[1], pressed[0]), promotion=promo) #Creates move
                 if move in self.board.legal_moves: #Checks if move is legal
                     self.make_move(move) #Makes move
-                    engine.get_best_move(self.board, self.startBoard.fen()) #Sets engine to find best response
+                    if training:
+                        engine.get_training_move(self.board, self.startBoard.fen())
+                    else:
+                        engine.get_best_move(self.board, self.startBoard.fen()) #Sets engine to find best response
                     return None
             else:
                 if self.board.piece_at(chess.square(pressed[1], pressed[0])):
@@ -283,12 +331,29 @@ class Game: #Class that holds the board info and moves
     def make_move(self, move): #Makes a move
         self.board.push(move) #Makes move on board
         self.moves.append(move) #Adds move to list of moves
+        outcome = self.board.outcome()
+        if outcome:
+            self.game_over(outcome)
 
-    def make_engine_move(self, engine):
-        moveUci = engine.get_move_response(self.board) #Gets move
-        if moveUci:
-            move = chess.Move.from_uci(moveUci) #Makes move object from string
-            self.make_move(move) #Makes move
+    def game_over(self, outcome):
+        if outcome.winner == self.human:
+            msg = "You won, congratulations"
+        elif outcome.winner:
+            msg = "You lost, commiserations"
+        else:
+            msg = "Draw!"
+        show_message(msg)
+
+    def make_engine_move(self, engine, training):
+        if training:
+            move, eval = engine.get_training_move_resp(self.board)
+            if move:
+                self.train.update(self.board, move, eval)
+        else:
+            moveUci = engine.get_move_response(self.board) #Gets move
+            if moveUci:
+                move = chess.Move.from_uci(moveUci) #Makes move object from string
+                self.make_move(move) #Makes move
 
     def get_promotion(self): #Creates window to allow user to pick what piece they want to promote their pawn to
         promoPieces = [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
@@ -297,6 +362,7 @@ class Game: #Class that holds the board info and moves
         while True:
             event, values = popup.read()
             if event in promoPieces:
+                popup.close()
                 return event #Returns piece
 
 
@@ -306,12 +372,6 @@ def get_piece_img(piece, colour): #Gets the file name for image of piece of spec
     else:
         colourCode = "b_"
     return imgDir + colourCode + imgs[piece - 1] + ".png"
-
-
-
-
-
-
 
 
 main()
