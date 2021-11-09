@@ -167,11 +167,19 @@ class Engine: #Handles communication with the egine
 
     def get_training_response(self, board):
         while not self.output.responses.empty():
+            movesResps = []
             response = self.output.responses.get() #Gets next response
-            if "bestmove" in response and self.commandPositions.get() == board.fen():
+            """if "bestmove" in response and self.commandPositions.get() == board.fen():
                 if "eval" in response: #If it contains bestmove and the command was from the current board
                     responseList = response.split(" ")
-                    return int(responseList[1]), int(responseList[3])
+                    return int(responseList[1]), int(responseList[3])"""
+            if "move " in response 
+                moveResps.append(response)
+            if "done" in response:
+                if self.commandPositions.get() == board.fen():
+                    return moveResps
+                else:
+                    moveResps = []
         return None, None #Was no correct response
 
 
@@ -346,7 +354,11 @@ class Game: #Class that holds the board info and moves
 
     def make_engine_move(self, engine, training):
         if training:
-            move, eval = engine.get_training_move_resp(self.board)
+            moveResps = engine.get_training_move_resp(self.board)
+            moves = {}
+            for resp in moveResps:
+                respSplit = resp.split(" ")
+                moves[chess.Move.from_uci(respSplit[0])] = int(respSplit[1]) 
             if move:
                 self.train.update(self.board, move, eval)
         else:
