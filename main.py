@@ -20,7 +20,7 @@ diffs = ["Easy", "Medium", "Hard", "Impossible"]  # Difficulties
 
 def main():
     engine = Engine()  # Creates Engine
-    game = Game(board=chess.Board(None))  # Create game
+    game = Game(engine, board=chess.Board(None))  # Create game
     layout = create_layout()  # Creates Layout
     window = sg.Window("Chess", [layout, [engine.output.button]])  #Setups GUI
     lastPressed = None
@@ -31,13 +31,13 @@ def main():
         if event == sg.WIN_CLOSED or event == 'Exit':  #Closes GUI
             break
         elif event == "From Start":  # Creates new game from start
-            game = Game()
+            game = Game(engine)
         elif event == "From PGN":  # Creates game from PGN
-            gameIn = Game(board=get_pgn())
+            gameIn = get_pgn(engine)
             if gameIn:  # If PGN worked
                 game = gameIn
         elif event == "From FEN":  # Creates game from FEN
-            gameIn = get_fen()
+            gameIn = get_fen(engine)
             if gameIn:
                 game = gameIn
         elif type(event) is tuple:  # If it was a click on a square
@@ -59,7 +59,7 @@ def main():
             window.find_element("Hint").update(visible=True)
             window.find_element("Undo").update(visible=True)
             window.find_element("mode-info").update("Training")
-            training = False
+            training = True
         update_window(window, game)
     engine.engine.kill() # Ends the engine process
 
@@ -173,7 +173,7 @@ class Engine: #Handles communication with the egine
                 if "eval" in response: #If it contains bestmove and the command was from the current board
                     responseList = response.split(" ")
                     return int(responseList[1]), int(responseList[3])"""
-            if "move " in response 
+            if "move " in response:
                 moveResps.append(response)
             if "done" in response:
                 if self.commandPositions.get() == board.fen():
@@ -228,16 +228,16 @@ def show_message(message): #Creates a window that displays an error message
             return
 
 
-def get_fen(): #Gets a fen from user input and makes board from it
+def get_fen(engine): #Gets a fen from user input and makes board from it
     fen = get_input("Please enter the FEN")
     try:
-        game = Game(board = chess.Board(fen))
+        game = Game(engine, board = chess.Board(fen))
         return game
     except ValueError: #IF there was an error while parsing the fen
         show_message("You entered an incorrect FEN")
 
 
-def get_pgn(): #Gets a PGN from user input and creates board from it
+def get_pgn(engine): #Gets a PGN from user input and creates board from it
     pgn = get_input("Please enter the PGN:")
     try:
         if pgn:
@@ -248,7 +248,7 @@ def get_pgn(): #Gets a PGN from user input and creates board from it
                 for move in game.mainline_moves():
                     board.push(move)
                 if board.fen() != chess.STARTING_FEN:
-                    return Game(board=board) #PGN was correct and board is made
+                    return Game(engine, board=board) #PGN was correct and board is made
     except ValueError:
         pass
     show_message("The PGN you entered was incorrect") #PGN was not correct
@@ -283,18 +283,44 @@ class TrainingInfo:
     def __init__(self):
         self.fen = ""
         self.bestMove = None
+        self.moves = {}
         self.eval = 0
-        self.lastMove = 2  #2-Perfect 1-ok 0-bad
+        self.lastMove = None  #3-Perfect 2-good 1-ok 0-bad
 
-    def update(self, board, move, evalIn):
+    def update(self, board, moves):
         self.fen = board.fen()
-        self.bestMove = move
-        self.eval = evalIn
+        self.moves = moves
+        self.eval = -float("inf")
+        self.bestMove = None
+        self.lastMove = None
+        for key in moves.keys():
+            if moves[key] > self.eval:
+                self.eval = moves[key]
+                self.bestMove = key
+
+    def player_move(self, board, move):
+        self.lastMove = self.get_move_eval(board, move)
+
+    def get_move_eval(self, board, move):
+        if board.fen() == self.fen:
+            if move == self.bestMove:
+                return 3
+            moveEval = self.moves.get(move)
+            if moveEval is not None:
+                diff = self.eval - moveEval
+                if diff < 100:
+                    return 2
+                if diff < 200:
+                    return 1
+                else:
+                    return 0
+        return None
+
 
 
 
 class Game: #Class that holds the board info and moves
-    def __init__(self, humanColour=True, board=None):
+    def __init__(self, engine, humanColour=True, board=None):
         if board:
             self.board = board
             self.startBoard = copy.deepcopy(board)
@@ -306,6 +332,8 @@ class Game: #Class that holds the board info and moves
             self.startBoard = chess.Board()
             self.moves = []
         self.human = humanColour
+        if self.board.turn != self.human:
+            engine.get_best_move(self.board, self.startBoard.fen())
         self.train  = TrainingInfo()
 
     def get_move_list(self): #Gets list of moves in short algebraic notation
@@ -323,10 +351,7 @@ class Game: #Class that holds the board info and moves
                 move = chess.Move(startSquare, chess.square(pressed[1], pressed[0]), promotion=promo) #Creates move
                 if move in self.board.legal_moves: #Checks if move is legal
                     self.make_move(move) #Makes move
-                    if training:
-                        engine.get_training_move(self.board, self.startBoard.fen())
-                    else:
-                        engine.get_best_move(self.board, self.startBoard.fen()) #Sets engine to find best response
+                    engine.get_best_move(self.board, self.startBoard.fen()) #Sets engine to find best response
                     return None
             else:
                 if self.board.piece_at(chess.square(pressed[1], pressed[0])):
@@ -346,26 +371,28 @@ class Game: #Class that holds the board info and moves
     def game_over(self, outcome):
         if outcome.winner == self.human:
             msg = "You won, congratulations"
-        elif outcome.winner:
+        elif outcome.winner is not None:
             msg = "You lost, commiserations"
         else:
             msg = "Draw!"
         show_message(msg)
 
     def make_engine_move(self, engine, training):
-        if training:
+        if training and self.board.turn == self.human:
             moveResps = engine.get_training_move_resp(self.board)
             moves = {}
             for resp in moveResps:
                 respSplit = resp.split(" ")
                 moves[chess.Move.from_uci(respSplit[0])] = int(respSplit[1]) 
-            if move:
-                self.train.update(self.board, move, eval)
+            if moves:
+                self.train.update(self.board, moves)
         else:
             moveUci = engine.get_move_response(self.board) #Gets move
             if moveUci:
                 move = chess.Move.from_uci(moveUci) #Makes move object from string
                 self.make_move(move) #Makes move
+                if training:
+                    engine.get_training_move(self.board, self.startBoard.fen())
 
     def get_promotion(self): #Creates window to allow user to pick what piece they want to promote their pawn to
         promoPieces = [chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN]
