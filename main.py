@@ -12,6 +12,7 @@ import copy
 enginePath = r"Chess.exe"
 whiteColour = "#e8e8ed"
 blackColour = "#007acc"
+colourTrain = ["#ff0900", "#00e02d", "#57bd52", "#ffaa00"]
 imgDir = "img/"  # Folder with images in
 blankImg = imgDir + "blank.png"  # Empty square
 imgs = ["pawn", "knight", "bishop", "rook", "queen", "king"]  # File names of pieces
@@ -60,12 +61,21 @@ def main():
             window.find_element("Undo").update(visible=True)
             window.find_element("mode-info").update("Training")
             training = True
+        elif event == "Hint":
+            give_hint(game)
+        elif event == "Undo":
+            game.board.move_stack.pop()
         update_window(window, game)
     engine.engine.kill() # Ends the engine process
 
+def give_hint(game):
+    message = "The best move is by a " + chess.piece_name(game.board.piece_at(game.train.bestMove.from_square).piece_type)
+    show_message(message)
+
+
 
 def update_window(window, game):
-    update_board(window, game.board)
+    update_board(window, game)
     update_movelist(window, game)
 
 
@@ -93,102 +103,6 @@ def create_layout():  # Creates layout of GUI
                 #This lists the moves from the game
     layout = [menu, board, info,  moveList] #Collates all the parts
     return layout
-
-
-class EngineOutput(threading.Thread): #This is a threaded worker that waits for and recieves any output from the engine
-    
-    def __init__(self, pipe):
-        super(EngineOutput, self).__init__()
-        self.pipe = pipe
-        self.button = sg.Button(visible=False, key="engine_output") #The button that is triggered when there is output from the engine
-        self.responses = Queue() #The output of the engine is added to this queue
-        self.daemon = True
-
-    def run(self):
-        self.worker()
-
-    def worker(self):
-        while True:
-            line = self.pipe.readline().strip() #Gets engine output
-            if line == '': #If engine has closed
-                break
-            else:
-                self.responses.put(line) #Adds output to responses queue
-                self.button.click() #Triggers the button
-
-
-
-class Engine: #Handles communication with the egine
-    def __init__(self):
-        self.commandPositions = Queue() #The board positions for each command sent to engine
-        self.engine = Popen(enginePath,  stdin=PIPE, stdout=PIPE, stderr=STDOUT, universal_newlines=True) #Opens the engine exe
-        self.output = EngineOutput(self.engine.stdout) #Makes the output worker
-        self.output.start()
-        self.difficulty = 3; #Sets default difficulty
-
-    def send(self, command): #Sends commands to engine
-        self.engine.stdin.write(command)
-        self.engine.stdin.write("\n")
-        self.engine.stdin.flush()
-
-    def set_position(self, board, startFen): #Sends a position command to engine
-        command = "position fen "
-        command += startFen + " "  #Sets the fen before moves are made
-        board2 = chess.Board(startFen) #Makes a board with the fen
-        command += "moves"
-        for move in board.move_stack: #Iterates through the moves
-            moveStr = board2.uci(move) #Gets the uci version of the move
-            command += " " + moveStr #Adds it to commamd
-            board2.push(move) #Makes move on board
-        self.send(command) #Sends command to engine
-
-    def search(self): #Gets engine to search for best move
-        if self.difficulty == 3:
-            self.send("go")
-        else:
-            self.send("go diff " + str(self.difficulty)) #Search with difficulty level attached
-
-    def get_training_move(self, board, startFen):
-        self.commandPositions.put(board.fen())  # Adds current position to queue
-        self.set_position(board, startFen)  # Sets position within engine to current position
-        self.send("go eval")
-
-    def get_best_move(self, board, startFen): #Finds bestmove
-        self.commandPositions.put(board.fen()) #Adds current position to queue
-        self.set_position(board, startFen) #Sets position within engine to current position
-        self.search() #Searches
-
-    def get_response(self, board):
-        while not self.output.responses.empty():
-            response = self.output.responses.get() #Gets next response
-            if "bestmove" in response and self.commandPositions.get() == board.fen(): #If it contains bestmove and the command was from the current board
-                    return response 
-        return None #Was no correct response
-
-    def get_training_response(self, board):
-        while not self.output.responses.empty():
-            movesResps = []
-            response = self.output.responses.get() #Gets next response
-            """if "bestmove" in response and self.commandPositions.get() == board.fen():
-                if "eval" in response: #If it contains bestmove and the command was from the current board
-                    responseList = response.split(" ")
-                    return int(responseList[1]), int(responseList[3])"""
-            if "move " in response:
-                moveResps.append(response)
-            if "done" in response:
-                if self.commandPositions.get() == board.fen():
-                    return moveResps
-                else:
-                    moveResps = []
-        return None, None #Was no correct response
-
-
-    def get_move_response(self, board): #Returns the move from the response
-        response = self.get_response(board)
-        if response:
-            return response[response.find("bestmove")+9:]
-        else:
-            return None
 
 
 def export_game(message, output): #Creates a window that displays text to user allowing the game to be exported in different ways
@@ -268,7 +182,8 @@ def create_board(): #Creates board for GUI
     return boardSg
 
 
-def update_board(window, board): #Updates the board
+def update_board(window, game): #Updates the board
+    board = game.board
     for rowNum in range(8):
         for colNum in range(8):#Iterates through every square on board
             piece = board.piece_at(chess.square(colNum, rowNum)) #Gets piece at square
@@ -276,7 +191,109 @@ def update_board(window, board): #Updates the board
                 imgFile = get_piece_img(piece.piece_type, piece.color) #Gets image for piece
             else:
                 imgFile = blankImg #Or blank image
-            window[(rowNum, colNum)].Update(image_filename=imgFile) #Updates square with image
+            if (rowNum+colNum) % 2 == 0: #Finds whether current square is white or black
+                colour = blackColour
+            else:
+                colour = whiteColour
+            window[(rowNum, colNum)].Update(image_filename=imgFile, button_color=colour) #Updates square with image
+    train = game.train
+    if train.lastMoveEval:
+        lastMove = train.lastMove
+        squares = [lastMove.from_square, lastMove.to_square]
+        colour = colourTrain[train.lastMoveEval]
+        for square in squares:
+            window[(chess.square_rank(square), chess.square_file(square))].Update(button_color=colour)
+
+
+class EngineOutput(threading.Thread): #This is a threaded worker that waits for and recieves any output from the engine
+    def __init__(self, pipe):
+        super(EngineOutput, self).__init__()
+        self.pipe = pipe
+        self.button = sg.Button(visible=False, key="engine_output") #The button that is triggered when there is output from the engine
+        self.responses = Queue() #The output of the engine is added to this queue
+        self.daemon = True
+
+    def run(self):
+        self.worker()
+
+    def worker(self):
+        while True:
+            line = self.pipe.readline().strip() #Gets engine output
+            if line == '': #If engine has closed
+                break
+            else:
+                self.responses.put(line) #Adds output to responses queue
+                if "bestmove" in line or "done" in line:
+                    self.button.click() #Triggers the button
+
+
+class Engine: #Handles communication with the egine
+    def __init__(self):
+        self.commandPositions = Queue() #The board positions for each command sent to engine
+        self.engine = Popen(enginePath,  stdin=PIPE, stdout=PIPE, stderr=STDOUT, universal_newlines=True) #Opens the engine exe
+        self.output = EngineOutput(self.engine.stdout) #Makes the output worker
+        self.output.start()
+        self.difficulty = 3; #Sets default difficulty
+
+    def send(self, command): #Sends commands to engine
+        self.engine.stdin.write(command)
+        self.engine.stdin.write("\n")
+        self.engine.stdin.flush()
+
+    def set_position(self, board, startFen): #Sends a position command to engine
+        command = "position fen "
+        command += startFen + " "  #Sets the fen before moves are made
+        board2 = chess.Board(startFen) #Makes a board with the fen
+        command += "moves"
+        for move in board.move_stack: #Iterates through the moves
+            moveStr = board2.uci(move) #Gets the uci version of the move
+            command += " " + moveStr #Adds it to commamd
+            board2.push(move) #Makes move on board
+        self.send(command) #Sends command to engine
+
+    def search(self): #Gets engine to search for best move
+        if self.difficulty == 3:
+            self.send("go")
+        else:
+            self.send("go diff " + str(self.difficulty)) #Search with difficulty level attached
+
+    def get_training_move(self, board, startFen):
+        self.commandPositions.put(board.fen())  # Adds current position to queue
+        self.set_position(board, startFen)  # Sets position within engine to current position
+        self.send("go eval")
+
+    def get_best_move(self, board, startFen): #Finds bestmove
+        self.commandPositions.put(board.fen()) #Adds current position to queue
+        self.set_position(board, startFen) #Sets position within engine to current position
+        self.search() #Searches
+
+    def get_response(self, board):
+        while not self.output.responses.empty():
+            response = self.output.responses.get() #Gets next response
+            if "bestmove" in response and self.commandPositions.get() == board.fen(): #If it contains bestmove and the command was from the current board
+                    return response
+        return None #Was no correct response
+
+    def get_training_response(self, board):
+        moveResps = []
+        while not self.output.responses.empty():
+            response = self.output.responses.get() #Gets next response
+            if "move " in response:
+                moveResps.append(response)
+            if "done" in response:
+                if self.commandPositions.get() == board.fen():
+                    return moveResps
+                else:
+                    moveResps = []
+        return None #Was no correct response
+
+
+    def get_move_response(self, board): #Returns the move from the response
+        response = self.get_response(board)
+        if response:
+            return response[response.find("bestmove")+9:]
+        else:
+            return None
 
 
 class TrainingInfo:
@@ -286,6 +303,7 @@ class TrainingInfo:
         self.moves = {}
         self.eval = 0
         self.lastMove = None  #3-Perfect 2-good 1-ok 0-bad
+        self.lastMoveEval = None
 
     def update(self, board, moves):
         self.fen = board.fen()
@@ -293,15 +311,18 @@ class TrainingInfo:
         self.eval = -float("inf")
         self.bestMove = None
         self.lastMove = None
+        self.lastMoveEval = None
         for key in moves.keys():
             if moves[key] > self.eval:
                 self.eval = moves[key]
                 self.bestMove = key
+        print("test")
 
     def player_move(self, board, move):
-        self.lastMove = self.get_move_eval(board, move)
+        self.lastMoveEval = self.get_move_eval(board, move)
 
     def get_move_eval(self, board, move):
+        self.lastMove = move
         if board.fen() == self.fen:
             if move == self.bestMove:
                 return 3
@@ -310,7 +331,7 @@ class TrainingInfo:
                 diff = self.eval - moveEval
                 if diff < 100:
                     return 2
-                if diff < 200:
+                if diff < 300:
                     return 1
                 else:
                     return 0
@@ -350,6 +371,8 @@ class Game: #Class that holds the board info and moves
                     promo = None
                 move = chess.Move(startSquare, chess.square(pressed[1], pressed[0]), promotion=promo) #Creates move
                 if move in self.board.legal_moves: #Checks if move is legal
+                    if training:
+                        self.train.player_move(self.board, move)
                     self.make_move(move) #Makes move
                     engine.get_best_move(self.board, self.startBoard.fen()) #Sets engine to find best response
                     return None
@@ -379,13 +402,14 @@ class Game: #Class that holds the board info and moves
 
     def make_engine_move(self, engine, training):
         if training and self.board.turn == self.human:
-            moveResps = engine.get_training_move_resp(self.board)
+            moveResps = engine.get_training_response(self.board)
             moves = {}
-            for resp in moveResps:
-                respSplit = resp.split(" ")
-                moves[chess.Move.from_uci(respSplit[0])] = int(respSplit[1]) 
-            if moves:
-                self.train.update(self.board, moves)
+            if moveResps:
+                for resp in moveResps:
+                    respSplit = resp.split(" ")
+                    moves[chess.Move.from_uci(respSplit[1])] = int(respSplit[2])
+                if moves:
+                    self.train.update(self.board, moves)
         else:
             moveUci = engine.get_move_response(self.board) #Gets move
             if moveUci:
