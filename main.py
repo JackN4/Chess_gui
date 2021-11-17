@@ -12,7 +12,7 @@ import copy
 enginePath = r"Chess.exe"
 whiteColour = "#e8e8ed"
 blackColour = "#007acc"
-colourTrain = ["#ff0900", "#00e02d", "#57bd52", "#ffaa00"]
+colourTrain = ["#ff0900", "#ffaa00", "#57bd52", "#00e02d"]
 imgDir = "img/"  # Folder with images in
 blankImg = imgDir + "blank.png"  # Empty square
 imgs = ["pawn", "knight", "bishop", "rook", "queen", "king"]  # File names of pieces
@@ -68,10 +68,10 @@ def main():
         update_window(window, game)
     engine.engine.kill() # Ends the engine process
 
+
 def give_hint(game):
     message = "The best move is by a " + chess.piece_name(game.board.piece_at(game.train.bestMove.from_square).piece_type)
     show_message(message)
-
 
 
 def update_window(window, game):
